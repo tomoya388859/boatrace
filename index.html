@@ -248,6 +248,8 @@ details summary{cursor:pointer;font-weight:700;font-size:14px}
 .barrow{display:grid;grid-template-columns:76px 1fr 52px;gap:8px;align-items:center;font-size:13px}
 .bar-t{height:10px;background:var(--chip);border-radius:5px;overflow:hidden}
 .bar-t i{display:block;height:100%;background:var(--deep);border-radius:5px}
+.bar-t i.w1{box-shadow:inset 0 0 0 1.5px #888}
+.scen .barrow{grid-template-columns:120px 1fr 44px}
 .barrow b{text-align:right;font-size:14px}
 h3.sub{font-size:13px;margin:10px 0 4px;color:var(--muted)}
 .deme{width:100%}
@@ -755,7 +757,7 @@ function tabPredict(v, r) {
       ${oriRows(r)}</tbody></table></div>`;
     if (r["気象"]) tenji += `<p class="note">天候 ${esc(r["気象"]["天候"])}　風 ${esc(r["気象"]["風向"])} ${r["気象"]["風速"]}m　波 ${r["気象"]["波高"]}cm</p>`;
   }
-  const sb = (r["勝負買い目"] || []).length ? `<section class="card" style="border-color:var(--accent)"><h2 style="color:var(--accent)">勝負買い目（検証済み・資金の2%）</h2>
+  const sb = (r["勝負買い目"] || []).length ? `<section class="card" style="border-color:var(--accent)"><h2 style="color:var(--accent)">勝負買い目（4カドまくり）</h2>
       <p class="note">勝負レースの買い目は、通知した時点で自動で収支に入ります。買わなかったときは、収支タブで「買っていない」を押してください。</p>
       <table class="tk"><tbody>${r["勝負買い目"].map(x => `<tr><td>${x["券種"]}</td><td class="c">${x["買い目"]}</td><td class="p">${yen(x["金額"])}円</td><td class="p">${x["結果"] ? `<span class="${x["結果"] === '的中' ? 'hit' : ''}">${x["結果"]}</span>` : ''}</td></tr>`).join('')}</tbody></table></section>` : '';
   const p1 = r["1着確率"];
@@ -764,11 +766,50 @@ function tabPredict(v, r) {
       <div class="svgbox" style="margin-top:8px">${turnSvg(r)}</div><p class="cap">1マーク到達の予想。スタート（スタート展示のST。展示前は平均ST）と伸び（直線タイム。ない場は展示タイム）から前後を計算し、抜け出す艇（オレンジ）が外を回るか内に差すかを展開で決めています。</p>${reachTable(r)}${r["展示"] ? "" : '<p class="note">展示前なのでスタートだけで計算しています。展示後は伸びも反映されます。</p>'}</section>
     <section><h2>展示情報</h2>${tenji}</section>
     ${sb}
-    <section><h2>予想買い目（モデル・未検証）</h2>
-      <table class="tk"><tbody>${r["予想買い目"].map(x => { const od = oddsOf(r)[x["券種"]] || {}; const o = od[x["買い目"]]; const ev = o != null ? x["確率"] * o : null;
-        return `<tr><td><button class="addb" data-add="${x["券種"]}|${x["買い目"]}" aria-pressed="${cartHas(x["券種"], x["買い目"])}" aria-label="記録に追加">${cartHas(x["券種"], x["買い目"]) ? '✓' : '＋'}</button> ${x["券種"]}</td><td class="c">${x["買い目"]}</td><td class="p">${(x["確率"] * 100).toFixed(1)}%</td><td class="p">${o != null ? o.toFixed(1) + '倍' : '<span style="color:var(--muted)">オッズ —</span>'}</td><td class="p ${ev != null && ev >= 1 ? 'hit' : ''}">${ev != null ? '期待値 ' + ev.toFixed(2) : ''}</td></tr>`; }).join('')}</tbody></table>
-      <p class="note">1着の確率：${[1, 2, 3, 4, 5, 6].map(b => `${b}号艇 ${(p1[b] * 100).toFixed(0)}%`).join('　')}<br>
-      コースの基本勝率を、選手のそのコースでの成績・展示・抜け出し・風と波で補正した目安です。期待値＝確率×オッズで、1を超えるとモデル上はプラスです（モデル自体はまだ検証していません）。</p></section>`;
+    ${probSection(r)}`;
+}
+
+/* ---------- 展開の確率と、このレースの買い目候補（確率×オッズ） ---------- */
+const EV_MIN = 1.1, P3_MIN = 0.01, P2_MIN = 0.02;
+function candidates(r) {
+  const od = oddsOf(r), out = [];
+  for (const [kind, key, pmin] of [['3連単', '3連単確率', P3_MIN], ['2連単', '2連単確率', P2_MIN]]) {
+    const probs = r[key] || {}, o = od[kind] || {};
+    for (const [c, p] of Object.entries(probs)) {
+      if (p < pmin || o[c] == null) continue;
+      const ev = p * o[c];
+      if (ev >= EV_MIN) out.push({kind, c, p, o: o[c], ev});
+    }
+  }
+  return out.sort((a, b) => b.ev - a.ev);
+}
+function tkRow(kind, c, p, o, ev) {
+  return `<tr><td><button class="addb" data-add="${kind}|${c}" aria-pressed="${cartHas(kind, c)}" aria-label="記録に追加">${cartHas(kind, c) ? '✓' : '＋'}</button> ${kind}</td><td class="c">${c}</td><td class="p">${(p * 100).toFixed(1)}%</td><td class="p">${o != null ? o.toFixed(1) + '倍' : '<span style="color:var(--muted)">—</span>'}</td><td class="p ${ev != null && ev >= 1 ? 'hit' : ''}">${ev != null ? ev.toFixed(2) : ''}</td></tr>`;
+}
+function probSection(r) {
+  const sc = r["展開"] || {}, scen = sc["展開確率"] || [], p1 = r["1着確率"] || {};
+  const mx = Math.max(...scen.map(x => x["確率"]), 0.01);
+  const scenHtml = scen.length ? `<div class="bars scen">${scen.slice(0, 6).map(x => `<div class="barrow"><span class="bl-l">${esc(x["展開"])}</span><span class="bar-t"><i style="width:${(x["確率"] / mx * 100).toFixed(1)}%"></i></span><b class="num">${(x["確率"] * 100).toFixed(0)}%</b></div>`).join('')}</div>` : '';
+  const winHtml = `<div class="bars">${[1, 2, 3, 4, 5, 6].map(b => `<div class="barrow"><span class="bl-l">${waku(b)}</span><span class="bar-t"><i class="w${b}" style="background:var(--c${b});width:${((p1[b] || 0) * 100).toFixed(1)}%"></i></span><b class="num">${((p1[b] || 0) * 100).toFixed(0)}%</b></div>`).join('')}</div>`;
+  const od = oddsOf(r), hasOdds = !!(od["3連単"] && Object.keys(od["3連単"]).length);
+  const cand = hasOdds ? candidates(r) : [];
+  const c3 = cand.filter(x => x.kind === '3連単').slice(0, 8), c2 = cand.filter(x => x.kind === '2連単').slice(0, 4);
+  const head = '<thead><tr><th>券種</th><th>買い目</th><th>確率</th><th>オッズ</th><th>期待値</th></tr></thead>';
+  let candHtml;
+  if (!hasOdds) {
+    candHtml = `<p class="note">オッズは締切の30分前から出ます。出たら、確率×オッズが${EV_MIN}以上の買い目をここに並べます。いまは確率の高い順です。</p>
+      <table class="tk">${head}<tbody>${(r["予想買い目"] || []).map(x => tkRow(x["券種"], x["買い目"], x["確率"], null, null)).join('')}</tbody></table>`;
+  } else if (!cand.length) {
+    candHtml = `<p class="note">確率×オッズが${EV_MIN}以上の買い目はありません（見送り候補）。参考に確率の高い順を出します。</p>
+      <table class="tk">${head}<tbody>${(r["予想買い目"] || []).map(x => { const o = (od[x["券種"]] || {})[x["買い目"]]; return tkRow(x["券種"], x["買い目"], x["確率"], o, o != null ? x["確率"] * o : null); }).join('')}</tbody></table>`;
+  } else {
+    candHtml = `<table class="tk">${head}<tbody>${[...c3, ...c2].map(x => tkRow(x.kind, x.c, x.p, x.o, x.ev)).join('')}</tbody></table>
+      <p class="note">確率×オッズ（期待値）が${EV_MIN}以上で、確率が3連単${P3_MIN * 100}%・2連単${P2_MIN * 100}%以上のものを、期待値の高い順に。</p>`;
+  }
+  return `<section><h2>展開の確率</h2>${scenHtml}
+      <h3 class="sub">1着の確率</h3>${winHtml}</section>
+    <section><h2>このレースの買い目候補</h2>${candHtml}
+      <p class="note">確率は、過去4年分のレースで「〇%と出たものが、ほぼ〇%当たる」ことを確かめたモデル（平均ST・展示・タイプ・1コースの負け方・級別・勝率・モーター）です。期待値で選んで儲かるかは、締切前オッズの記録がたまってから確かめます。</p></section>`;
 }
 
 function histCell(k, val) {
